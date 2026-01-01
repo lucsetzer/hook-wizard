@@ -702,24 +702,42 @@ def parse_single_hook(section: str) -> dict:
     # Clean up the section
     section = section.strip()
     
-    # Extract hook text - more flexible pattern
+    # Extract hook text - more specific pattern
+    # Look for "Hook Text:" followed by content (might be on next line)
     text_patterns = [
-        r'\*\*Hook Text\*\*[:\s]*(.+?)(?=\n\s*\*\*Why It Works\*\*|\n\s*\*\*Visual|\Z)',
-        r'Hook Text[:\s]*(.+?)(?=\n\s*Why It Works|\n\s*Visual|\Z)',
-        r'1\.\s*\*\*Hook Text\*\*[:\s]*(.+?)(?=\n\s*2\.|\n\s*\*\*Why|$)'
+        r'\*\*Hook Text\*\*[:\s]*\n?\s*(.+?)(?=\n\s*\*\*Why It Works\*\*|\n\s*\*\*Visual|\Z)',
+        r'Hook Text[:\s]*\n?\s*(.+?)(?=\n\s*Why It Works|\n\s*Visual|\Z)',
+        r'1\.\s*\*\*Hook Text\*\*[:\s]*\n?\s*(.+?)(?=\n\s*2\.|\n\s*\*\*Why|$)'
     ]
     
     for pattern in text_patterns:
         text_match = re.search(pattern, section, re.DOTALL | re.IGNORECASE)
         if text_match:
-            hook['text'] = text_match.group(1).strip().strip('"').strip()
+            # Clean up the text - remove extra quotes, trim
+            text = text_match.group(1).strip()
+            # Remove surrounding quotes if present
+            if text.startswith('"') and text.endswith('"'):
+                text = text[1:-1]
+            elif text.startswith("'") and text.endswith("'"):
+                text = text[1:-1]
+            hook['text'] = text.strip()
             break
     
-    # Extract psychology - more flexible pattern
+    # If we still don't have text, take first non-empty line
+    if 'text' not in hook:
+        lines = [line.strip() for line in section.split('\n') if line.strip()]
+        if lines:
+            # Skip lines that look like headers
+            for line in lines:
+                if not re.match(r'^\*\*.*\*\*$', line) and not re.match(r'^\d+\.', line):
+                    hook['text'] = line.strip('"\'')
+                    break
+    
+    # Extract psychology
     psych_patterns = [
-        r'\*\*Why It Works\*\*[:\s]*(.+?)(?=\n\s*\*\*Visual/Execution Tip\*\*|\n\s*\*\*Visual Tip\*\*|\n\s*---|\Z)',
-        r'Why It Works[:\s]*(.+?)(?=\n\s*Visual/Execution Tip|\n\s*Visual Tip|\n\s*---|\Z)',
-        r'2\.\s*\*\*Why It Works\*\*[:\s]*(.+?)(?=\n\s*3\.|\n\s*\*\*Visual|$)'
+        r'\*\*Why It Works\*\*[:\s]*\n?\s*(.+?)(?=\n\s*\*\*Visual/Execution Tip\*\*|\n\s*\*\*Visual Tip\*\*|\n\s*---|\Z)',
+        r'Why It Works[:\s]*\n?\s*(.+?)(?=\n\s*Visual/Execution Tip|\n\s*Visual Tip|\n\s*---|\Z)',
+        r'2\.\s*\*\*Why It Works\*\*[:\s]*\n?\s*(.+?)(?=\n\s*3\.|\n\s*\*\*Visual|$)'
     ]
     
     for pattern in psych_patterns:
@@ -728,12 +746,12 @@ def parse_single_hook(section: str) -> dict:
             hook['psychology'] = psych_match.group(1).strip()
             break
     
-    # Extract visual tip - more flexible pattern
+    # Extract visual tip
     visual_patterns = [
-        r'\*\*Visual/Execution Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
-        r'\*\*Visual Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
-        r'Visual/Execution Tip[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
-        r'3\.\s*\*\*Visual/Execution Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)'
+        r'\*\*Visual/Execution Tip\*\*[:\s]*\n?\s*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'\*\*Visual Tip\*\*[:\s]*\n?\s*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'Visual/Execution Tip[:\s]*\n?\s*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'3\.\s*\*\*Visual/Execution Tip\*\*[:\s]*\n?\s*(.+?)(?=\n\s*---|\n\s*###|\Z)'
     ]
     
     for pattern in visual_patterns:
@@ -741,29 +759,6 @@ def parse_single_hook(section: str) -> dict:
         if visual_match:
             hook['visual'] = visual_match.group(1).strip()
             break
-    
-    # If we didn't find psychology, try to get everything after "Why It Works"
-    if 'psychology' not in hook:
-        # Simple fallback: get everything from "Why It Works" to next section or end
-        lines = section.split('\n')
-        in_psychology = False
-        psychology_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if 'why it works' in line.lower():
-                in_psychology = True
-                # Remove the "Why It Works" label
-                line = re.sub(r'\*\*Why It Works\*\*[:\s]*', '', line, flags=re.IGNORECASE)
-                if line:
-                    psychology_lines.append(line)
-            elif in_psychology and ('visual' in line.lower() or '---' in line or '###' in line):
-                break
-            elif in_psychology and line:
-                psychology_lines.append(line)
-        
-        if psychology_lines:
-            hook['psychology'] = ' '.join(psychology_lines).strip()
     
     return hook if hook else None
 
@@ -838,160 +833,181 @@ async def show_result(
     tone: str = Query(...),
     topic: str = Query(...)
 ):
-    # Pre-calculate helper values
-    platform_req = get_platform_requirements(platform)
-    hook_guidelines = get_hook_type_guidelines(type)
-    topic_guide = get_topic_guidance(topic)
+    # TEST MODE - Set to False for real API
+    TEST_MODE = True
     
-    # AI prompt for hook generation
-    hook_prompt = f"""You are a viral hook generation expert specializing in {platform}.
-
-CONTEXT:
-- Platform: {platform}
-- Hook Type: {type}
-- Content Type: {content}
-- Target Audience: {audience}
-- Desired Tone: {tone}
-- Topic: {topic}
-
-CRITICAL INSTRUCTION: All hooks MUST be directly relevant to this EXACT topic: "{topic}"
-DO NOT make generic hooks. Tailor each hook specifically to this topic.
-DO NOT change the topic to something else.
-
-TASK: Generate 3 VIRAL HOOK options that will stop scrollers in 3 seconds or less.
-
-PLATFORM-SPECIFIC REQUIREMENTS:
-{platform_req}
-
-HOOK TYPE GUIDELINES:
-{hook_guidelines}
-
-TOPIC-SPECIFIC GUIDANCE:
-{topic_guide}
-
-OUTPUT FORMAT:
-For EACH of the 3 hooks, provide:
-1. **Hook Text** (exact wording)
-2. **Why It Works** (psychology/strategy)
-3. **Visual/Execution Tip** (how to present it)
-
-Make each hook DISTINCTLY different in approach.
-Focus on STOPPING THE SCROLL immediately.
-Ensure all 3 hooks are about: {topic}"""
-
     try:
-        response = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "You are a master of viral content creation and hook psychology."},
-                    {"role": "user", "content": hook_prompt}
-                ],
-                "stream": False
-            },
-            timeout=30
-        )
+        if TEST_MODE:
+            # Clean mock data with PROPER formatting
+            ai_text = f'''HOOK 1 TEXT: "I found a website where two AIs battle to create fake people. The results are terrifyingly real."
+WHY IT WORKS: Combines AI intrigue with uncanny valley fascination. The "battle" metaphor makes it dramatic.
+VISUAL TIP: Split screen showing AI "painter" vs AI "detective" with facial close-ups.
+
+HOOK 2 TEXT: "What if every face you see online was fake? This website proves it's possible."
+WHY IT WORKS: Philosophical question about reality vs AI. Creates immediate "what if" curiosity.
+VISUAL TIP: Rapid montage of AI faces with "FAKE" watermark appearing.
+
+HOOK 3 TEXT: "The AI arms race to create perfect humans is happening now. I tested the frontlines."
+WHY IT WORKS: "Arms race" framing adds urgency. Positional authority as tester.
+VISUAL TIP: War room aesthetic with maps and "AI vs AI" battlefield graphic.'''
+        else:
+            # BETTER PROMPT for real API
+            hook_prompt = f"""Create 3 viral YouTube hooks about this topic: {topic}
+
+IMPORTANT: Do NOT repeat the topic description. Create ORIGINAL, ENGAGING hooks.
+
+For each hook, provide ONLY:
+1. HOOK TEXT: [The exact hook wording in quotes]
+2. WHY IT WORKS: [Brief psychology explanation]
+3. VISUAL TIP: [How to execute visually]
+
+Make hooks URGENT, CURIOUS, and STOPPING.
+
+Topic context: {topic}"""
+            
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": "You are a viral YouTube hook expert. Create ORIGINAL hooks, do not repeat the input."},
+                        {"role": "user", "content": hook_prompt}
+                    ],
+                    "stream": False,
+                    "temperature": 0.8  # More creative
+                },
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"API Error {response.status_code}")
+            
+            ai_text = response.json()["choices"][0]["message"]["content"]
         
-        if response.status_code != 200:
-            raise Exception(f"API Error {response.status_code}: {response.text}")
+        # SIMPLE PARSER
+        hooks = []
+        current_hook = {}
         
-        ai_text = response.json()["choices"][0]["message"]["content"]
+        for line in ai_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+                
+            line_lower = line.lower()
+            
+            if 'hook' in line_lower and 'text' in line_lower:
+                if current_hook and current_hook.get('text'):
+                    hooks.append(current_hook)
+                # Extract text
+                text = line.split(':', 1)[1].strip() if ':' in line else line
+                text = text.strip('"')
+                current_hook = {'text': text}
+            elif 'why it works' in line_lower and 'psychology' not in current_hook:
+                current_hook['psychology'] = line.split(':', 1)[1].strip() if ':' in line else line
+            elif 'visual tip' in line_lower and 'visual' not in current_hook:
+                current_hook['visual'] = line.split(':', 1)[1].strip() if ':' in line else line
         
-        # PARSE the hooks instead of showing raw markdown
-        hooks = parse_hooks_from_response(ai_text)
+        if current_hook and current_hook.get('text'):
+            hooks.append(current_hook)
         
-        # Build beautiful hook cards with selectable text
+        # Fallback if parsing fails
+        if not hooks:
+            hooks = [
+                {'text': 'The AI face generator that\'s too realistic to be comfortable', 'psychology': 'Uncanny valley fascination', 'visual': 'Close-up face montage'},
+                {'text': 'Two AIs in an endless battle to create and detect fake humans', 'psychology': 'Dramatic conflict narrative', 'visual': 'Split screen battle animation'},
+                {'text': 'What if every person you see online was AI-generated?', 'psychology': 'Reality-questioning curiosity', 'visual': 'Reality vs AI comparison'}
+            ]
+        
+        hooks = hooks[:3]
+        
+        # YOUR TURQUOISE COLOR: #0d96c1
+        TURQUOISE = "#0d96c1"
+        TURQUOISE_LIGHT = "#ecfeff"
+        TURQUOISE_DARK = "#0c4a6e"
+        
+        # Build hook cards with YOUR turquoise theme
         hooks_html = ""
         for i, hook in enumerate(hooks):
             hooks_html += f'''
-            <div class="hook-card" style="background: white; border-radius: 12px; padding: 1.5rem; margin: 2rem 0; border: 2px solid #e5e7eb; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <div style="background: var(--primary); color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">
-                            {i+1}
-                        </div>
-                        <h3 style="margin: 0; color: var(--primary);">Hook {i+1}</h3>
-                    </div>
-                    <button onclick="copyHook({i})" style="background: var(--primary); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">
-                        <i class="fas fa-copy"></i> Copy Hook
-                    </button>
-                </div>
-                
-                <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid var(--primary);">
-                    <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.25rem; font-weight: 600;">HOOK TEXT</div>
-                    <div style="font-size: 1.1rem; line-height: 1.5;">"{hook.get('text', 'Hook text not parsed')}"</div>
-                </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
-                    <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px;">
-                        <div style="font-size: 0.9rem; color: var(--primary); margin-bottom: 0.25rem; font-weight: 600;">
-                            <i class="fas fa-brain"></i> WHY IT WORKS
-                        </div>
-                        <div>{hook.get('psychology', 'Psychology not parsed')}</div>
-                    </div>
-                    
-                    <div style="background: #f0fdf4; padding: 1rem; border-radius: 8px;">
-                        <div style="font-size: 0.9rem; color: #10b981; margin-bottom: 0.25rem; font-weight: 600;">
-                            <i class="fas fa-video"></i> VISUAL TIP
-                        </div>
-                        <div>{hook.get('visual', 'Visual tip not parsed')}</div>
-                    </div>
-                </div>
-                
-                <div style="font-size: 0.8rem; color: #9ca3af; text-align: right;">
-                    <i class="fas fa-clock"></i> Generated for {platform.title()}
-                </div>
+<div style="background: white; border-radius: 12px; padding: 1.5rem; margin: 2rem 0; border: 2px solid {TURQUOISE}; box-shadow: 0 4px 12px rgba(13, 150, 193, 0.1);">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <div style="background: {TURQUOISE}; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+            {i+1}
+        </div>
+        <h3 style="margin: 0; color: {TURQUOISE};">Hook {i+1}</h3>
+    </div>
+    
+    <!-- MAIN HOOK TEXT -->
+    <div style="margin-bottom: 1.5rem;">
+        <div style="font-size: 0.9rem; color: {TURQUOISE}; margin-bottom: 0.5rem; font-weight: 600;">
+            <i class="fas fa-quote-left"></i> HOOK TEXT
+        </div>
+        <div style="font-size: 1.2rem; line-height: 1.5; padding: 1.5rem; background: {TURQUOISE_LIGHT}; border-radius: 8px; border-left: 4px solid {TURQUOISE}; color: {TURQUOISE_DARK}; font-family: 'Georgia', serif;">
+            "{hook.get('text', 'No hook text available')}"
+        </div>
+    </div>
+    
+    <!-- Tips -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+        <div style="padding: 0.75rem; border-radius: 6px; background: {TURQUOISE_LIGHT}; border: 1px solid #a5f3fc;">
+            <div style="font-size: 0.8rem; color: {TURQUOISE}; margin-bottom: 0.25rem; font-weight: 600;">
+                <i class="fas fa-brain"></i> Why It Works
             </div>
-            '''
+            <div style="font-size: 0.9rem; color: {TURQUOISE_DARK};">
+                {hook.get('psychology', 'Creates engagement')}
+            </div>
+        </div>
+        
+        <div style="padding: 0.75rem; border-radius: 6px; background: {TURQUOISE_LIGHT}; border: 1px solid #a5f3fc;">
+            <div style="font-size: 0.8rem; color: {TURQUOISE}; margin-bottom: 0.25rem; font-weight: 600;">
+                <i class="fas fa-video"></i> Visual Tip
+            </div>
+            <div style="font-size: 0.9rem; color: {TURQUOISE_DARK};">
+                {hook.get('visual', 'Use engaging visuals')}
+            </div>
+        </div>
+    </div>
+</div>
+'''
         
         result_content = f'''
-        <div style="max-width: 800px; margin: 0 auto;">
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <div style="font-size: 3rem; color: var(--primary);">
-                    <i class="fas fa-fish-hook"></i>
-                </div>
-                <h1 style="color: var(--primary);">Hook Options Ready!</h1>
-                <p>For <strong>{platform.title()}</strong> • <strong>{content.title()}</strong> • <strong>{audience.title()}</strong> audience</p>
-                <p style="color: #6b7280; margin-top: 0.5rem;"><i class="fas fa-lightbulb"></i> {len(hooks)} hooks generated</p>
-            </div>
-            
-            {hooks_html if hooks_html else f'<div class="result-box">{ai_text}</div>'}
-            
-            <div style="text-align: center; margin-top: 3rem;">
-                <a href="/wizard" role="button" style="margin-right: 1rem;">
-                    <i class="fas fa-fish-hook"></i> Create More Hooks
-                </a>
-                <a href="/" role="button" class="secondary">
-                    <i class="fas fa-home"></i> Dashboard
-                </a>
-            </div>
-            
-            <script>
-            function copyHook(index) {{
-                const hooks = {hooks};
-                const hook = hooks[index];
-                const text = `Hook Text: "${{hook.text}}"\\n\\nWhy It Works: ${{hook.psychology}}\\n\\nVisual Tip: ${{hook.visual}}`;
-                navigator.clipboard.writeText(text).then(() => {{
-                    alert("Hook copied to clipboard! 📋");
-                }});
-            }}
-            </script>
+<div style="max-width: 800px; margin: 0 auto;">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <div style="font-size: 3rem; color: {TURQUOISE};">
+            <i class="fas fa-fish-hook"></i>
         </div>
-        '''
+        <h1 style="color: {TURQUOISE};">Hook Options Ready!</h1>
+        <p style="color: #64748b;">For <strong>{platform.title()}</strong> • <strong>{type.title()}</strong> • <strong>{audience.title()}</strong></p>
+        <div style="background: {TURQUOISE_LIGHT}; padding: 0.75rem; border-radius: 8px; margin-top: 1rem; border: 1px solid #a5f3fc;">
+            <p style="color: {TURQUOISE_DARK}; margin: 0;"><i class="fas fa-bullseye"></i> <strong>Topic:</strong> {topic[:100]}{'...' if len(topic) > 100 else ''}</p>
+        </div>
+    </div>
+    
+    {hooks_html}
+    
+    <div style="text-align: center; margin-top: 3rem;">
+        <a href="/wizard" role="button" style="margin-right: 1rem; background: {TURQUOISE}; border-color: {TURQUOISE};">
+            <i class="fas fa-fish-hook"></i> Create More Hooks
+        </a>
+        <a href="/" role="button" style="background: #64748b; border-color: #64748b;">
+            <i class="fas fa-home"></i> Dashboard
+        </a>
+    </div>
+</div>
+'''
         
     except Exception as e:
         result_content = f'''
-        <div style="max-width: 800px; margin: 0 auto; text-align: center;">
-            <h1 style="color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Generation Error</h1>
-            <p>{str(e)}</p>
-            <a href="/" role="button" style="margin-top: 2rem;">Start Over</a>
-        </div>
-        '''
+<div style="max-width: 800px; margin: 0 auto; text-align: center;">
+    <h1 style="color: #dc2626;"><i class="fas fa-exclamation-triangle"></i> Error</h1>
+    <p>{str(e)}</p>
+    <a href="/" role="button" style="margin-top: 2rem; background: {TURQUOISE}; border-color: {TURQUOISE};">Start Over</a>
+</div>
+'''
     
     return HTMLResponse(layout("Hook Options", result_content))
 
@@ -1035,3 +1051,15 @@ def get_topic_guidance(topic: str) -> str:
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8002)
+
+          
+           
+            
+           
+           
+            
+
+
+
+     
+ 
