@@ -3,6 +3,7 @@ from fastapi import FastAPI, Query, Form
 from fastapi.responses import HTMLResponse
 import uvicorn
 import requests
+import re
 from fastapi.templating import Jinja2Templates
 templates = Jinja2Templates(directory="templates")
 
@@ -661,35 +662,146 @@ async def process_hook(
     return HTMLResponse(layout("Creating Hooks...", loading_content))
 
 def parse_hooks_from_response(ai_response: str) -> list:
-    """Simple parser for hook responses"""
+    """Parse AI response into structured hook data"""
     hooks = []
     
-    # Look for numbered hooks
+    # Clean the response
+    ai_response = ai_response.strip()
+    
+    # Split by hook sections (looks for "### **Hook Option X**" or similar)
     import re
     
-    # Simple pattern: look for "1.", "2.", "3." followed by content
-    sections = re.split(r'\n\s*\d+\.', ai_response)
+    # Try multiple patterns
+    patterns = [
+        r'### \*\*Hook Option \d+\*\*',  # ### **Hook Option 1**
+        r'\d+\.\s*\*\*Hook Text\*\*',    # 1. **Hook Text**
+        r'Hook Option \d+:',             # Hook Option 1:
+    ]
     
-    # Skip first section if it's not a hook
-    for i, section in enumerate(sections[1:4]):  # Take first 3
-        lines = [line.strip() for line in section.strip().split('\n') if line.strip()]
-        
-        if len(lines) >= 3:
-            hooks.append({
-                "text": lines[0].replace('**Hook Text**:', '').replace('**Hook Text**:', '').strip(),
-                "psychology": lines[1].replace('**Why It Works**:', '').replace('**Why It Works**:', '').strip(),
-                "visual": lines[2].replace('**Visual/Execution Tip**:', '').replace('**Visual/Execution Tip**:', '').strip()
-            })
+    for pattern in patterns:
+        sections = re.split(pattern, ai_response, flags=re.IGNORECASE)
+        if len(sections) > 1:  # Found matches
+            # Skip first part (might be intro text)
+            for section in sections[1:4]:  # Take first 3 hooks
+                hook = parse_single_hook(section)
+                if hook:
+                    hooks.append(hook)
+            break
     
-    # If parsing fails, return simple hooks
+    # If still no hooks, try a simpler approach
     if not hooks:
-        hooks = [
-            {"text": "Hook 1: Engaging question about your topic", "psychology": "Creates curiosity", "visual": "Use text overlay"},
-            {"text": "Hook 2: Surprising fact about your topic", "psychology": "Challenges assumptions", "visual": "Show statistic visually"},
-            {"text": "Hook 3: Personal story related to your topic", "psychology": "Builds connection", "visual": "Use personal photo"}
-        ]
+        hooks = parse_fallback_hooks(ai_response)
     
     return hooks
+
+def parse_single_hook(section: str) -> dict:
+    """Parse a single hook section"""
+    import re
+    hook = {}
+    
+    # Clean up the section
+    section = section.strip()
+    
+    # Extract hook text - more flexible pattern
+    text_patterns = [
+        r'\*\*Hook Text\*\*[:\s]*(.+?)(?=\n\s*\*\*Why It Works\*\*|\n\s*\*\*Visual|\Z)',
+        r'Hook Text[:\s]*(.+?)(?=\n\s*Why It Works|\n\s*Visual|\Z)',
+        r'1\.\s*\*\*Hook Text\*\*[:\s]*(.+?)(?=\n\s*2\.|\n\s*\*\*Why|$)'
+    ]
+    
+    for pattern in text_patterns:
+        text_match = re.search(pattern, section, re.DOTALL | re.IGNORECASE)
+        if text_match:
+            hook['text'] = text_match.group(1).strip().strip('"').strip()
+            break
+    
+    # Extract psychology - more flexible pattern
+    psych_patterns = [
+        r'\*\*Why It Works\*\*[:\s]*(.+?)(?=\n\s*\*\*Visual/Execution Tip\*\*|\n\s*\*\*Visual Tip\*\*|\n\s*---|\Z)',
+        r'Why It Works[:\s]*(.+?)(?=\n\s*Visual/Execution Tip|\n\s*Visual Tip|\n\s*---|\Z)',
+        r'2\.\s*\*\*Why It Works\*\*[:\s]*(.+?)(?=\n\s*3\.|\n\s*\*\*Visual|$)'
+    ]
+    
+    for pattern in psych_patterns:
+        psych_match = re.search(pattern, section, re.DOTALL | re.IGNORECASE)
+        if psych_match:
+            hook['psychology'] = psych_match.group(1).strip()
+            break
+    
+    # Extract visual tip - more flexible pattern
+    visual_patterns = [
+        r'\*\*Visual/Execution Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'\*\*Visual Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'Visual/Execution Tip[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)',
+        r'3\.\s*\*\*Visual/Execution Tip\*\*[:\s]*(.+?)(?=\n\s*---|\n\s*###|\Z)'
+    ]
+    
+    for pattern in visual_patterns:
+        visual_match = re.search(pattern, section, re.DOTALL | re.IGNORECASE)
+        if visual_match:
+            hook['visual'] = visual_match.group(1).strip()
+            break
+    
+    # If we didn't find psychology, try to get everything after "Why It Works"
+    if 'psychology' not in hook:
+        # Simple fallback: get everything from "Why It Works" to next section or end
+        lines = section.split('\n')
+        in_psychology = False
+        psychology_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if 'why it works' in line.lower():
+                in_psychology = True
+                # Remove the "Why It Works" label
+                line = re.sub(r'\*\*Why It Works\*\*[:\s]*', '', line, flags=re.IGNORECASE)
+                if line:
+                    psychology_lines.append(line)
+            elif in_psychology and ('visual' in line.lower() or '---' in line or '###' in line):
+                break
+            elif in_psychology and line:
+                psychology_lines.append(line)
+        
+        if psychology_lines:
+            hook['psychology'] = ' '.join(psychology_lines).strip()
+    
+    return hook if hook else None
+
+def parse_fallback_hooks(ai_response: str) -> list:
+    """Fallback parsing if regex fails"""
+    hooks = []
+    lines = ai_response.split('\n')
+    
+    current_hook = {}
+    current_section = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        if 'hook text' in line.lower() or line.startswith('1.') or line.startswith('2.') or line.startswith('3.'):
+            if current_hook and 'text' in current_hook:
+                hooks.append(current_hook)
+            current_hook = {'text': line.replace('**Hook Text**:', '').replace('**Hook Text**:', '').strip().strip('"')}
+        elif 'why it works' in line.lower():
+            current_hook['psychology'] = line.replace('**Why It Works**:', '').replace('**Why It Works**:', '').strip()
+        elif 'visual' in line.lower():
+            current_hook['visual'] = line.replace('**Visual/Execution Tip**:', '').replace('**Visual Tip**:', '').strip()
+    
+    # Don't forget the last hook
+    if current_hook and 'text' in current_hook:
+        hooks.append(current_hook)
+    
+    # Ensure we have 3 hooks
+    while len(hooks) < 3:
+        hooks.append({
+            'text': f'Hook {len(hooks)+1}: Engaging hook about your topic',
+            'psychology': 'Creates curiosity and engagement',
+            'visual': 'Use text overlay and engaging visuals'
+        })
+    
+    return hooks[:3]  # Return max 3 hooks
 
 def get_hook_type_guidelines(hook_type: str) -> str:
     guidelines = {
@@ -785,42 +897,93 @@ Ensure all 3 hooks are about: {topic}"""
             timeout=30
         )
         
-        if response.status_code == 200:
-            ai_text = response.json()["choices"][0]["message"]["content"]
-            
-            result_content = f'''
-            <div style="max-width: 800px; margin: 0 auto;">
-                <div style="text-align: center; margin-bottom: 2rem;">
-                    <div style="font-size: 3rem; color: var(--primary);">
-                        <i class="fas fa-fish-hook"></i>
+        if response.status_code != 200:
+            raise Exception(f"API Error {response.status_code}: {response.text}")
+        
+        ai_text = response.json()["choices"][0]["message"]["content"]
+        
+        # PARSE the hooks instead of showing raw markdown
+        hooks = parse_hooks_from_response(ai_text)
+        
+        # Build beautiful hook cards with selectable text
+        hooks_html = ""
+        for i, hook in enumerate(hooks):
+            hooks_html += f'''
+            <div class="hook-card" style="background: white; border-radius: 12px; padding: 1.5rem; margin: 2rem 0; border: 2px solid #e5e7eb; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <div style="background: var(--primary); color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                            {i+1}
+                        </div>
+                        <h3 style="margin: 0; color: var(--primary);">Hook {i+1}</h3>
                     </div>
-                    <h1 style="color: var(--primary);">Hook Options Ready!</h1>
-                    <p>For <strong>{platform.title()}</strong> • <strong>{content.title()}</strong> • <strong>{audience.title()}</strong> audience</p>
+                    <button onclick="copyHook({i})" style="background: var(--primary); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;">
+                        <i class="fas fa-copy"></i> Copy Hook
+                    </button>
                 </div>
                 
-                <div class="result-box">
-                    {ai_text}
+                <div style="background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid var(--primary);">
+                    <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.25rem; font-weight: 600;">HOOK TEXT</div>
+                    <div style="font-size: 1.1rem; line-height: 1.5;">"{hook.get('text', 'Hook text not parsed')}"</div>
                 </div>
                 
-                <div style="text-align: center; margin-top: 3rem;">
-                    <a href="/wizard" role="button" style="margin-right: 1rem;">
-                        <i class="fas fa-fish-hook"></i> Create More Hooks
-                    </a>
-                    <a href="/" role="button" class="secondary">
-                        <i class="fas fa-home"></i> Dashboard
-                    </a>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                    <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px;">
+                        <div style="font-size: 0.9rem; color: var(--primary); margin-bottom: 0.25rem; font-weight: 600;">
+                            <i class="fas fa-brain"></i> WHY IT WORKS
+                        </div>
+                        <div>{hook.get('psychology', 'Psychology not parsed')}</div>
+                    </div>
+                    
+                    <div style="background: #f0fdf4; padding: 1rem; border-radius: 8px;">
+                        <div style="font-size: 0.9rem; color: #10b981; margin-bottom: 0.25rem; font-weight: 600;">
+                            <i class="fas fa-video"></i> VISUAL TIP
+                        </div>
+                        <div>{hook.get('visual', 'Visual tip not parsed')}</div>
+                    </div>
+                </div>
+                
+                <div style="font-size: 0.8rem; color: #9ca3af; text-align: right;">
+                    <i class="fas fa-clock"></i> Generated for {platform.title()}
                 </div>
             </div>
             '''
-        else:
-            result_content = f'''
-            <div style="max-width: 800px; margin: 0 auto; text-align: center;">
-                <h1 style="color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> API Error</h1>
-                <p>Hook generation failed. Status: {response.status_code}</p>
-                <a href="/wizard/step6?platform={platform}&type={type}&content={content}&audience={audience}&tone={tone}" 
-                   role="button" style="margin-top: 2rem;">Try Again</a>
+        
+        result_content = f'''
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <div style="font-size: 3rem; color: var(--primary);">
+                    <i class="fas fa-fish-hook"></i>
+                </div>
+                <h1 style="color: var(--primary);">Hook Options Ready!</h1>
+                <p>For <strong>{platform.title()}</strong> • <strong>{content.title()}</strong> • <strong>{audience.title()}</strong> audience</p>
+                <p style="color: #6b7280; margin-top: 0.5rem;"><i class="fas fa-lightbulb"></i> {len(hooks)} hooks generated</p>
             </div>
-            '''
+            
+            {hooks_html if hooks_html else f'<div class="result-box">{ai_text}</div>'}
+            
+            <div style="text-align: center; margin-top: 3rem;">
+                <a href="/wizard" role="button" style="margin-right: 1rem;">
+                    <i class="fas fa-fish-hook"></i> Create More Hooks
+                </a>
+                <a href="/" role="button" class="secondary">
+                    <i class="fas fa-home"></i> Dashboard
+                </a>
+            </div>
+            
+            <script>
+            function copyHook(index) {{
+                const hooks = {hooks};
+                const hook = hooks[index];
+                const text = `Hook Text: "${{hook.text}}"\\n\\nWhy It Works: ${{hook.psychology}}\\n\\nVisual Tip: ${{hook.visual}}`;
+                navigator.clipboard.writeText(text).then(() => {{
+                    alert("Hook copied to clipboard! 📋");
+                }});
+            }}
+            </script>
+        </div>
+        '''
+        
     except Exception as e:
         result_content = f'''
         <div style="max-width: 800px; margin: 0 auto; text-align: center;">
@@ -831,8 +994,6 @@ Ensure all 3 hooks are about: {topic}"""
         '''
     
     return HTMLResponse(layout("Hook Options", result_content))
-
-# ... all your previous code (dashboard, steps 1-6, /process endpoint) ...
 
 # ========== HELPER FUNCTIONS ==========
 # PUT THESE RIGHT HERE, AFTER /process BUT BEFORE /result
