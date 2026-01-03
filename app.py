@@ -15,187 +15,38 @@ IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") == "production"
 app = FastAPI()
 DEEPSEEK_KEY = "sk-221a023bf3d245048184283d594e3334"  # Same key
 
+
 def layout(title: str, content: str) -> str:
     return f'''<!DOCTYPE html>
 <html>
 <head>
-    <title>{title} | Hook Alchemy</title>
+    <title>{title}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root {{
-            --primary: #3b82f6;  /* BLUE theme for hooks */
-            --primary-hover: #2563eb;
-        }}
-        
-        [role="button"], button, .btn-primary {{
-            background: var(--primary);
-            border-color: var(--primary);
-        }}
-        
-        a {{ color: var(--primary); }}
-        a:hover {{ color: var(--primary-hover); }}
-        
-        .card-grid {{
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1rem;
-            margin: 2rem 0;
-        }}
-        
-        .step-card {{
-            padding: 1.5rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 0.75rem;
-            text-align: center;
-            text-decoration: none;
-            color: inherit;
-            transition: all 0.2s;
-        }}
-        
-        .step-card:hover {{
-            border-color: var(--primary);
-            transform: translateY(-2px);
-        }}
-        
-        .step-card i {{
-            font-size: 2rem;
-            color: var(--primary);
-            margin-bottom: 1rem;
-        }}
-        
-        .loading-bar {{
-            width: 100%;
-            height: 8px;
-            background: #e5e7eb;
-            border-radius: 4px;
-            margin: 2rem 0;
-            overflow: hidden;
-        }}
-        
-        .loading-progress {{
-            height: 100%;
-            background: linear-gradient(90deg, var(--primary), #60a5fa);
-            border-radius: 4px;
-            animation: loading 2s infinite;
-            width: 60%;
-        }}
-        
-        @keyframes loading {{
-            0% {{ transform: translateX(-100%); }}
-            100% {{ transform: translateX(350%); }}
-        }}
-        
-        .steps {{
-            display: flex;
-            justify-content: center;
-            gap: 0.5rem;
-            margin: 2rem 0;
-        }}
-        
-        .step {{
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: #e5e7eb;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-        }}
-        
-        .step.active {{
-            background: var(--primary);
-            color: white;
-        }}
-        
-        .result-box {{
-            background: #f8fafc;
-            border: 2px solid #e5e7eb;
-            border-left: 4px solid var(--primary);
-            border-radius: 0.5rem;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            white-space: pre-wrap;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 1rem;
-            line-height: 1.6;
-            text-align: left;
-            color: #1f2937;
-            overflow-x: auto;
-        }}
-        
-        .hook-example {{
-            background: #eff6ff;
-            border: 1px solid #dbeafe;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin: 0.5rem 0;
-            font-style: italic;
-        }}
+        :root {{ --primary: #8b5cf6; }}
+        nav {{ margin-bottom: 2rem; }}
     </style>
 </head>
-<body style="background: white;">
-    <!-- ========== COMPLETE NAVBAR ========== -->
-    <nav class="main-nav">
-        <div class="nav-container">
-            <!-- Logo -->
-            <a href="/" class="brand">
-                <i class="fas fa-flask"></i> Prompts Alchemy
-            </a>
-            
-            <!-- All Links -->
-            <div class="nav-links">
-                <!-- Home -->
-                <a href="/">
-                    <i class="fas fa-home"></i> Home
-                </a>
-                
-                <!-- Wizard 1 -->
-                <a href="/prompt-wizard/">
-                    <i class="fas fa-hat-wizard"></i> Prompt Wizard
-                </a>
-                
-                <!-- Wizard 2 -->
-                <a href="/thumbnail-wizard/">
-                    <i class="fas fa-image"></i> Thumbnail Wizard
-                </a>
-                
-                <!-- Wizard 3 -->
-                <a href="/video-wizard/">
-                    <i class="fas fa-video"></i> Video Wizard
-                </a>
-                
-                <!-- Wizard 4 -->
-                <a href="/hook-wizard/">
-                    <i class="fas fa-fish"></i> Hook Wizard
-                </a>
-                
-                <!-- Wizard 5 -->
-                <a href="/document-wizard/">
-                    <i class="fas fa-file-contract"></i> Document Wizard
-                </a>
-                
-                <!-- Pricing -->
-                <a href="#pricing">
-                    <i class="fas fa-tag"></i> Pricing
-                </a>
-                
-                <!-- Get Started Button -->
-                <a href="#pricing" class="nav-cta">
-                    <i class="fas fa-rocket"></i> Get Started
-                </a>
-            </div>
-        </div>
+<body>
+    <!-- SIMPLE NAV - JUST LINKS -->
+    <nav class="container">
+        <ul>
+            <li><strong><a href="/" style="text-decoration:none;">🏠 Home</a></strong></li>
+        </ul>
+        <ul>
+            <li><a href="/prompt-wizard/">✨ Prompt</a></li>
+            <li><a href="/thumbnail-wizard/">🖼️ Thumbnail</a></li>
+            <li><a href="/video-wizard/">🎬 Video</a></li>
+            <li><a href="/hook-wizard/">🎣 Hook</a></li>
+            <li><a href="/document-wizard/">📄 Document</a></li>
+            <li><a href="#pricing">💰 Pricing</a></li>
+        </ul>
     </nav>
-
-<main class="container" style="padding: 2rem 0; min-height: 80vh;">
-    {content}
-</main>
-
-<footer style="text-align: center; padding: 2rem; color: #6b7280; border-top: 1px solid #e5e7eb;">
-    <p>Hook Wizard • Create viral openings for any platform</p>
-</footer>
+    
+    <main class="container">
+        {content}
+    </main>
 </body>
 </html>'''
 
