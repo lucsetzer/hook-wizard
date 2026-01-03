@@ -5,7 +5,12 @@ import uvicorn
 import requests
 import re
 from fastapi.templating import Jinja2Templates
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory="templates"
+
+# Detect if running locally or deployed
+IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") == "production"
+# OR: IS_PRODUCTION = os.getenv("ENVIRONMENT") == "production"app = FastAPI()
+
 
 app = FastAPI()
 DEEPSEEK_KEY = "sk-221a023bf3d245048184283d594e3334"  # Same key
@@ -131,17 +136,58 @@ def layout(title: str, content: str) -> str:
     </style>
 </head>
 <body style="background: white;">
-<nav style="padding: 1rem 0; border-bottom: 1px solid #e5e7eb;">
-    <div class="container">
-        <a href="/" style="text-decoration: none; font-size: 1.25rem; font-weight: bold; color: var(--primary);">
-            <i class="fas fa-fish-hook"></i> Hook Alchemy
-        </a>
-        <span style="float: right;">
-            <a href="/" style="margin-right: 1rem;">Home</a>
-            <a href="/wizard">Hook Wizard</a>
-        </span>
-    </div>
-</nav>
+    <!-- ========== COMPLETE NAVBAR ========== -->
+    <nav class="main-nav">
+        <div class="nav-container">
+            <!-- Logo -->
+            <a href="/" class="brand">
+                <i class="fas fa-flask"></i> Prompts Alchemy
+            </a>
+            
+            <!-- All Links -->
+            <div class="nav-links">
+                <!-- Home -->
+                <a href="/">
+                    <i class="fas fa-home"></i> Home
+                </a>
+                
+                <!-- Wizard 1 -->
+                <a href="/prompt-wizard/">
+                    <i class="fas fa-hat-wizard"></i> Prompt Wizard
+                </a>
+                
+                <!-- Wizard 2 -->
+                <a href="/thumbnail-wizard/">
+                    <i class="fas fa-image"></i> Thumbnail Wizard
+                </a>
+                
+                <!-- Wizard 3 -->
+                <a href="/video-wizard/">
+                    <i class="fas fa-video"></i> Video Wizard
+                </a>
+                
+                <!-- Wizard 4 -->
+                <a href="/hook-wizard/">
+                    <i class="fas fa-fish"></i> Hook Wizard
+                </a>
+                
+                <!-- Wizard 5 -->
+                <a href="/document-wizard/">
+                    <i class="fas fa-file-contract"></i> Document Wizard
+                </a>
+                
+                <!-- Pricing -->
+                <a href="#pricing">
+                    <i class="fas fa-tag"></i> Pricing
+                </a>
+                
+                <!-- Get Started Button -->
+                <a href="#pricing" class="nav-cta">
+                    <i class="fas fa-rocket"></i> Get Started
+                </a>
+            </div>
+        </div>
+    </nav>
 
 <main class="container" style="padding: 2rem 0; min-height: 80vh;">
     {content}
